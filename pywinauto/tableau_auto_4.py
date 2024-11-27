@@ -60,13 +60,22 @@ class MainWindow(QMainWindow):
 
         # print_ui_objects(loaded_ui)
 
+        # 검색창
         self.search_input = loaded_ui.findChild(QLineEdit, "searchInput")
+        
+        # 검색 버튼
         self.search_button = loaded_ui.findChild(QPushButton, "searchButton")
         self.search_button.clicked.connect(self.search_accounts)
 
-        add_button = loaded_ui.findChild(QPushButton, "addButton")  # 버튼 ID
+        # 추가 버튼
+        add_button = loaded_ui.findChild(QPushButton, "addButton")
         add_button.clicked.connect(self.open_add_window)
+        
+        # 삭제 버튼
+        delete_button = loaded_ui.findChild(QPushButton, "deleteButton")
+        delete_button.clicked.connect(self.delete_account)
 
+        # 계정 목록
         self.account_table = loaded_ui.findChild(QTableWidget, "accountTable")
         self.account_table.setHorizontalHeaderLabels(["플랫폼", "아이디", "비밀번호"])
         self.account_table.itemDoubleClicked.connect(self.open_edit_window)
@@ -110,6 +119,7 @@ class MainWindow(QMainWindow):
             for col_idx, item in enumerate(account):
                 self.account_table.setItem(row_idx, col_idx, QTableWidgetItem(item))
 
+    # 계정 추가 창 생성
     def open_add_window(self):
         if not self.add_window:
             self.add_window = AddWindow()
@@ -118,10 +128,9 @@ class MainWindow(QMainWindow):
         # self.add_window.destroyed.connect(self.load_accounts)
         self.add_window.show()
 
-
+    # 계정 수정 창 생성
     def open_edit_window(self, item):
         row = item.row()
-        # print(row)
         platform = self.account_table.item(row, 0).text()
         id = self.account_table.item(row, 1).text()
         password = self.account_table.item(row, 2).text()
@@ -134,6 +143,43 @@ class MainWindow(QMainWindow):
             self.edit_window = EditWindow(platform, id, password)
             self.edit_window.show()
 
+    # 계정 삭제 기능
+    def delete_account(self):
+        # 선택된 행 가져오기
+        selected_items = self.account_table.selectedItems()
+        if not selected_items:
+            QMessageBox.warning(self, "계정 선택 오류", "삭제할 계정을 선택해야 합니다.")
+            return
+
+        # 선택된 행의 데이터 추출
+        row = self.account_table.currentRow()
+        platform = self.account_table.item(row, 0).text()
+        id = self.account_table.item(row, 1).text()
+        password = self.account_table.item(row, 2).text()
+
+        # 삭제 확인 메시지
+        confirmation = QMessageBox.question(
+            self, "확인",
+            f"{platform} 플랫폼에 대한 계정 {id}을 삭제하시겠습니까?",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        
+        # 삭제 확정
+        if confirmation == QMessageBox.Yes:
+            conn = sqlite3.connect("accounts.db")
+            cursor = conn.cursor()
+            cursor.execute(
+                "DELETE FROM accounts WHERE platform = ? AND username = ? AND password = ?",
+                (platform, id, password)
+            )
+            conn.commit()
+            conn.close()
+            
+            # 삭제 성공 메시지
+            QMessageBox.information(self, "", f"계정 삭제 성공!")
+
+            # 테이블 새로고침
+            self.load_accounts()
 
 class AddWindow(QMainWindow):
     def __init__(self):
