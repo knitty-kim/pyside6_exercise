@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QPushButton, QTableWidgetItem,
     QTableWidget, QLineEdit, QWidget, QMessageBox
 )
-from PySide6.QtCore import QFile, Qt
+from PySide6.QtCore import QFile, Qt, Signal
 from PySide6.QtUiTools import QUiLoader
 
 # base_dir = os.path.dirname(os.getcwd())
@@ -29,6 +29,7 @@ def init_db():
     ''')
     conn.commit()
     conn.close()
+
 
 def print_ui_objects(parent_widget):
     # 현재 UI 파일 내 객체를 출력
@@ -78,6 +79,8 @@ class MainWindow(QMainWindow):
         # 계정 목록
         self.account_table = loaded_ui.findChild(QTableWidget, "accountTable")
         self.account_table.setHorizontalHeaderLabels(["플랫폼", "아이디", "비밀번호"])
+        
+        # 계정 수정 이벤트 - 더블 클릭
         self.account_table.itemDoubleClicked.connect(self.open_edit_window)
 
     def keyPressEvent(self, event):
@@ -123,9 +126,11 @@ class MainWindow(QMainWindow):
     def open_add_window(self):
         if not self.add_window:
             self.add_window = AddWindow()
+
+            # 저장 완료 신호 연결
+            self.add_window.saved.connect(self.load_accounts)
         else:
             self.add_window.close()
-        # self.add_window.destroyed.connect(self.load_accounts)
         self.add_window.show()
 
     # 계정 수정 창 생성
@@ -135,12 +140,17 @@ class MainWindow(QMainWindow):
         id = self.account_table.item(row, 1).text()
         password = self.account_table.item(row, 2).text()
 
-        if not self.edit_window:
-            self.edit_window = EditWindow(platform, id, password)
-            self.edit_window.show()
+        if self.edit_window and self.edit_window.isVisible():
+            # 기존 창을 업데이트
+            self.edit_window.update_fields(platform, id, password)
+            self.edit_window.raise_()
+            self.edit_window.activateWindow()
+
         else:
-            self.edit_window.close()
+            # 새 창 생성
             self.edit_window = EditWindow(platform, id, password)
+            # 수정 후 새로고침 연결
+            self.edit_window.updated.connect(self.load_accounts)
             self.edit_window.show()
 
     # 계정 삭제 기능
@@ -181,7 +191,11 @@ class MainWindow(QMainWindow):
             # 테이블 새로고침
             self.load_accounts()
 
+            
 class AddWindow(QMainWindow):
+    # 저장 완료 신호 저장
+    saved = Signal()
+
     def __init__(self):
         super().__init__()
         self.load_ui()
@@ -207,7 +221,10 @@ class AddWindow(QMainWindow):
         self.id_input.clear()
         self.password_input.clear()
 
-        self.destroy()
+        # 저장 완료 신호 방출
+        self.saved.emit()
+
+        self.close()
 
     def load_ui(self):
         # QFile
@@ -240,13 +257,66 @@ class AddWindow(QMainWindow):
 
 
 class EditWindow(QMainWindow):
+    # 수정 완료 신호
+    updated = Signal()
+
     def __init__(self, platform, id, password):
         super().__init__()
+        
+        # 기존 데이터 임시 저장
+        self.original_platform = platform
+        self.original_id = id
+        self.original_password = password
+
         self.load_ui(platform, id, password)
 
+    def update_fields(self, platform, id, password):
+        self.platform_input.setText(platform)
+        self.id_input.setText(id)
+        self.password_input.setText(password)
+
     def save(self):
-        # QFile
-        pass
+        # 입력된 데이터
+        platform = self.platform_input.text().strip()
+        username = self.id_input.text().strip()
+        password = self.password_input.text().strip()
+
+        # 필수 입력
+        if not platform or not username or not password:
+            QMessageBox.warning(self, "입력 오류", "모든 필드를 입력해야 합니다.")
+            return
+
+        # 데이터베이스 업데이트
+        try:
+            conn = sqlite3.connect("accounts.db")
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                UPDATE accounts
+                SET platform = ?, username = ?, password = ?
+                WHERE platform = ? AND username = ? AND password = ?
+                """,
+                (platform, username, password,
+                 self.original_platform, self.original_id, self.original_password)
+            )
+            conn.commit()
+
+            # 업데이트 성공 여부 확인
+            if cursor.rowcount == 0:
+                QMessageBox.warning(self, "수정 실패", "데이터를 찾을 수 없습니다.")
+            else:
+                QMessageBox.information(self, "성공", "계정 정보가 성공적으로 수정되었습니다!")
+
+                # 수정 완료 신호 방출
+                self.updated.emit()
+
+                self.close()
+
+        except sqlite3.Error as e:
+            QMessageBox.critical(self, "데이터베이스 오류", f"수정 실패: {e}")
+
+        finally:
+            conn.close()
 
     def load_ui(self, platform, id, password):
         # QFile
@@ -259,29 +329,28 @@ class EditWindow(QMainWindow):
 
         self.setCentralWidget(loaded_ui)
         self.resize(loaded_ui.size())
-
+        
+        # 저장 버튼 연결
         save_button = loaded_ui.findChild(QPushButton, "saveButton")
         save_button.clicked.connect(self.save)
-
+        
+        # 취소 버튼 연결
         cancel_button = loaded_ui.findChild(QPushButton, "cancelButton")
         cancel_button.clicked.connect(self.close)
 
         # 계정 출력
-        platform_label = loaded_ui.findChild(QLineEdit, "lineEdit_platform")
-        platform_label.clear()
-        platform_label.setText(platform)
-        id_label = loaded_ui.findChild(QLineEdit, "lineEdit_id")
-        id_label.clear()
-        id_label.setText(id)
-        password_label = loaded_ui.findChild(QLineEdit, "lineEdit_password")
-        password_label.clear()
-        password_label.setText(password)
+        self.platform_input = loaded_ui.findChild(QLineEdit, "lineEdit_platform")
+        self.id_input = loaded_ui.findChild(QLineEdit, "lineEdit_id")
+        self.password_input = loaded_ui.findChild(QLineEdit, "lineEdit_password")
+
+        self.platform_input.setText(platform)
+        self.id_input.setText(id)
+        self.password_input.setText(password)
 
     def keyPressEvent(self, event):
         key = event.key()
         if key == Qt.Key_Enter or key == Qt.Key_Return:
-            # self.search_accounts()
-            pass
+            self.save()
         elif key == Qt.Key_Escape:
             self.close()
 
