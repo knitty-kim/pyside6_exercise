@@ -1,13 +1,23 @@
 import os
 import sys
 import sqlite3
+import time
 
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QPushButton, QTableWidgetItem,
-    QTableWidget, QLineEdit, QWidget, QMessageBox
+    QTableWidget, QLineEdit, QMessageBox
 )
 from PySide6.QtCore import QFile, Qt, Signal
 from PySide6.QtUiTools import QUiLoader
+
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
+
+from webdriver_manager.chrome import ChromeDriverManager
+
 
 # base_dir = os.path.dirname(os.getcwd())
 # print(base_dir)
@@ -46,10 +56,12 @@ class MainWindow(QMainWindow):
         self.load_ui()
         self.load_accounts()
 
+        self.driver = None
+        self.setup_webdriver()
+
     def load_ui(self):
         # QFile
         ui_file = QFile("ui_folder/ui_account_manager.ui")
-        ### ui_file.open(QFile.ReadOnly)
 
         # QUiLoader
         loader = QUiLoader()
@@ -71,6 +83,10 @@ class MainWindow(QMainWindow):
         # 추가 버튼
         add_button = loaded_ui.findChild(QPushButton, "addButton")
         add_button.clicked.connect(self.open_add_window)
+
+        # 수정 버튼
+        edit_button = loaded_ui.findChild(QPushButton, "editButton")
+        edit_button.clicked.connect(self.open_edit_window)
         
         # 삭제 버튼
         delete_button = loaded_ui.findChild(QPushButton, "deleteButton")
@@ -80,8 +96,47 @@ class MainWindow(QMainWindow):
         self.account_table = loaded_ui.findChild(QTableWidget, "accountTable")
         self.account_table.setHorizontalHeaderLabels(["플랫폼", "아이디", "비밀번호"])
         
-        # 계정 수정 이벤트 - 더블 클릭
-        self.account_table.itemDoubleClicked.connect(self.open_edit_window)
+        # 계정 더블 클릭
+        self.account_table.itemDoubleClicked.connect(self.fill_browser_fields)
+
+    # 크롬 드라이버 설정
+    def setup_webdriver(self):
+        chrome_options = Options()
+
+        # 브라우저 꺼짐 방지
+        chrome_options.add_experimental_option("detach", True)
+
+        # 불필요한 에러메시지 노출 방지
+        chrome_options.add_experimental_option("excludeSwitches", ["enable-logging"])
+
+        # 크롬 드라이버 매니저를 통해 크롬 드라이버 자동 설치
+        service = Service(excutable_path=ChromeDriverManager().install())
+        self.driver = webdriver.Chrome(service=service, options=chrome_options)
+
+    def fill_browser_fields(self, item):
+        row = item.row()
+        platform = self.account_table.item(row, 0).text()
+        username = self.account_table.item(row, 1).text()
+        password = self.account_table.item(row, 2).text()
+
+        self.driver.get(platform)
+
+        try:
+            # ID와 비밀번호 입력
+            username_field = self.driver.find_element(By.CSS_SELECTOR, "#id")
+            username_field.send_keys(username)
+            password_field = self.driver.find_element(By.CSS_SELECTOR, "#pw")
+            password_field.send_keys(password)
+
+            time.sleep(3)
+
+            login_button = self.driver.find_element(By.CSS_SELECTOR, "#log\.login")
+            login_button.click()
+
+            QMessageBox.information(self, "성공", f"{platform}에 계정 정보가 자동 입력되었습니다!")
+
+        except Exception as e:
+            QMessageBox.critical(self, "오류", f"브라우저 입력 중 오류 발생: {str(e)}")
 
     def keyPressEvent(self, event):
         key = event.key()
@@ -134,8 +189,15 @@ class MainWindow(QMainWindow):
         self.add_window.show()
 
     # 계정 수정 창 생성
-    def open_edit_window(self, item):
-        row = item.row()
+    def open_edit_window(self):
+        # 선택된 행 가져오기
+        selected_items = self.account_table.selectedItems()
+        if not selected_items:
+            QMessageBox.warning(self, "계정 선택 오류", "삭제할 계정을 선택해야 합니다.")
+            return
+
+        # 선택된 행의 데이터 추출
+        row = self.account_table.currentRow()
         platform = self.account_table.item(row, 0).text()
         id = self.account_table.item(row, 1).text()
         password = self.account_table.item(row, 2).text()
